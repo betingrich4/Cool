@@ -2,9 +2,14 @@
   "name": "whatsapp-status-bot",
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": "18.x",
+    "npm": "8.x"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "heroku-postbuild": "npm install"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.5.0",
