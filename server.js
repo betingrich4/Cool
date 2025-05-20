@@ -6,8 +6,6 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-import bcrypt from 'bcryptjs';
-import nodemailer from 'nodemailer';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
@@ -57,125 +55,37 @@ app.use(session({
 // Active Sessions Tracker
 const activeSessions = new Map();
 
-// Email Configuration
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
-
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Auth Middleware
-function authenticate(req, res, next) {
-  if (!req.session.userId) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-}
 
 // Routes
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Auth Routes
-app.post('/register', async (req, res) => {
-  try {
-    const { username, password, email } = req.body;
-    
-    // Validate input
-    if (!username || !password || !email) {
-      return res.status(400).json({ error: 'All fields are required' });
-    }
-    
-    // Check if user exists
-    const exists = await redisClient.hExists('users', username);
-    if (exists) {
-      return res.status(400).json({ error: 'Username already exists' });
-    }
-    
-    // Hash password
-    const hash = await bcrypt.hash(password, 10);
-    
-    // Store user
-    await redisClient.hSet('users', username, hash);
-    await redisClient.hSet('user_emails', username, email);
-    
-    // Send welcome email
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: 'Welcome to WhatsApp Auto-Deploy',
-      text: `Hi ${username},\n\nYour account has been successfully created!`
-    });
-    
-    res.status(201).json({ success: true });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    
-    // Validate input
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-    
-    // Get user
-    const hash = await redisClient.hGet('users', username);
-    if (!hash) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-    
-    // Compare passwords
-    const match = await bcrypt.compare(password, hash);
-    if (!match) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-    
-    // Create session
-    req.session.userId = username;
-    req.session.save();
-    
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/logout', authenticate, (req, res) => {
-  req.session.destroy();
-  res.json({ success: true });
-});
-
-// Deployment Route
-app.post('/deploy', authenticate, async (req, res) => {
+// Session Deployment
+app.post('/deploy', async (req, res) => {
   try {
     const { sessionId } = req.body;
-    const userId = req.session.userId;
     
     if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID is required' });
+      return res.status(400).json({ success: false, error: 'Session ID is required' });
     }
-    
-    // Cleanup old session if exists
-    if (activeSessions.has(userId)) {
-      activeSessions.get(userId).process.kill();
-      activeSessions.delete(userId);
+
+    // Validate session ID format
+    if (!sessionId.startsWith("Demo-Slayer~") || !sessionId.includes("#")) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid session format. Must be: Demo-Slayer~FILEID#KEY' 
+      });
     }
-    
+
+    // Generate unique ID for this deployment
+    const deploymentId = uuidv4();
+
     // Create config file
-    const configPath = path.join(__dirname, 'configs', `${userId}.cjs`);
+    const configPath = path.join(__dirname, 'configs', `${deploymentId}.cjs`);
     const configDir = path.dirname(configPath);
     
     if (!fs.existsSync(configDir)) {
@@ -188,13 +98,13 @@ app.post('/deploy', authenticate, async (req, res) => {
   AUTO_REACT: false,
   MODE: "private",
   PREFIX: ".",
-  USER_ID: "${userId}"
+  DEPLOYMENT_ID: "${deploymentId}"
 };\n`;
     
     fs.writeFileSync(configPath, configContent);
     
     // Start bot process
-    const botProcess = spawn('node', ['bot.js', userId], {
+    const botProcess = spawn('node', ['bot.js', deploymentId], {
       detached: true,
       stdio: 'ignore'
     });
@@ -202,71 +112,45 @@ app.post('/deploy', authenticate, async (req, res) => {
     botProcess.unref();
     
     // Track session
-    activeSessions.set(userId, {
+    activeSessions.set(deploymentId, {
       process: botProcess,
       startedAt: new Date(),
-      lastActivity: new Date(),
-      sessionId: sessionId.slice(0, 10) + '...' + sessionId.slice(-10)
+      lastActivity: new Date()
     });
     
     res.json({ 
       success: true,
-      message: 'Session deployed successfully',
-      sessionId: sessionId.slice(0, 5) + '...' + sessionId.slice(-5)
+      message: 'Session deployed successfully! Your bot is now running.',
+      deploymentId
     });
   } catch (error) {
     console.error('Deployment error:', error);
-    res.status(500).json({ error: 'Failed to deploy session' });
+    res.status(500).json({ success: false, error: 'Failed to deploy session' });
   }
 });
 
-// Dashboard Route
-app.get('/dashboard', authenticate, (req, res) => {
-  const userId = req.session.userId;
-  const sessionInfo = activeSessions.get(userId);
-  
-  if (!sessionInfo) {
-    return res.json({ active: false });
-  }
-  
-  res.json({
-    active: sessionInfo.process.exitCode === null,
-    uptime: Math.floor((new Date() - sessionInfo.startedAt) / 1000 / 60) + ' minutes',
-    sessionId: sessionInfo.sessionId
-  });
-});
-
-// Start Server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  
-  // Start cleanup job
-  setInterval(cleanupInactiveSessions, 60 * 60 * 1000); // Run hourly
-});
-
-// Cleanup Function
-async function cleanupInactiveSessions() {
+// Cleanup inactive sessions
+setInterval(() => {
   const now = new Date();
-  
-  for (const [userId, session] of activeSessions.entries()) {
+  activeSessions.forEach((session, deploymentId) => {
     if (now - session.lastActivity > 24 * 60 * 60 * 1000) { // 24h inactivity
       try {
         session.process.kill();
-        activeSessions.delete(userId);
+        activeSessions.delete(deploymentId);
         
-        // Notify user
-        const email = await redisClient.hGet('user_emails', userId);
-        if (email) {
-          await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: email,
-            subject: 'Session Terminated Due to Inactivity',
-            text: `Your WhatsApp session was automatically terminated after 24 hours of inactivity.`
-          });
+        // Delete config file
+        const configPath = path.join(__dirname, 'configs', `${deploymentId}.cjs`);
+        if (fs.existsSync(configPath)) {
+          fs.unlinkSync(configPath);
         }
       } catch (error) {
         console.error('Cleanup error:', error);
       }
     }
-  }
-      }
+  });
+}, 60 * 60 * 1000); // Run hourly
+
+// Start Server
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
