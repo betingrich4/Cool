@@ -16,68 +16,62 @@ const deploymentDir = path.join(__dirname, 'deployments', deploymentId);
 const config = JSON.parse(fs.readFileSync(path.join(deploymentDir, 'config.json')));
 
 console.log('Starting WhatsApp bot...');
-console.log('Initializing session...');
 
-const { state, saveCreds } = await useMultiFileAuthState(path.join(deploymentDir, 'auth'));
+try {
+  const { state, saveCreds } = await useMultiFileAuthState(path.join(deploymentDir, 'auth'));
 
-const sock = makeWASocket({
-  auth: state,
-  printQRInTerminal: false,
-  logger: { level: 'silent' }
-});
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: { level: 'silent' }
+  });
 
-console.log('Connecting to WhatsApp...');
+  console.log('Connecting to WhatsApp...');
 
-sock.ev.on('connection.update', (update) => {
-  if (update.connection === 'open') {
-    console.log('Successfully connected to WhatsApp!');
-    console.log('Ready to view and react to status updates');
-  }
-});
-
-sock.ev.on('creds.update', saveCreds);
-
-// Status handling
-sock.ev.on('messages.upsert', async ({ messages }) => {
-  const statusMsg = messages.find(m => m.key.remoteJid === 'status@broadcast');
-  
-  if (statusMsg) {
-    try {
-      console.log('New status detected');
-      
-      // 1. Mark status as viewed first
-      console.log('Marking status as read...');
-      await sock.readMessages([statusMsg.key]);
-      await delay(1000); // Small delay to ensure status is marked read
-      
-      // 2. Only react after status is viewed
-      console.log('Reacting to status...');
-      const reactions = ['❤️', '🔥', '👍', '😍', '👀', '🎉'];
-      const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
-      
-      await sock.sendMessage(statusMsg.key.remoteJid, {
-        react: {
-          text: randomReaction,
-          key: statusMsg.key
-        }
-      });
-      
-      console.log(`Reacted with ${randomReaction} to status`);
-    } catch (error) {
-      console.error('Error handling status:', error.message);
+  sock.ev.on('connection.update', (update) => {
+    if (update.connection === 'open') {
+      console.log('Successfully connected to WhatsApp!');
+      console.log('Ready to view and react to status updates');
     }
-  }
-});
+  });
 
-// Handle process termination
-process.on('SIGTERM', () => {
-  console.log('Shutting down gracefully...');
-  sock.end();
-  process.exit(0);
-});
+  sock.ev.on('creds.update', saveCreds);
 
-process.on('SIGINT', () => {
-  console.log('Shutting down gracefully...');
-  sock.end();
-  process.exit(0);
-});
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const statusMsg = messages.find(m => m.key.remoteJid === 'status@broadcast');
+    
+    if (statusMsg) {
+      try {
+        console.log('New status detected');
+        
+        // 1. First mark as viewed
+        console.log('Marking status as read...');
+        await sock.readMessages([statusMsg.key]);
+        await delay(1000); // Ensure status is marked read
+        
+        // 2. Then react
+        console.log('Reacting to status...');
+        const reactions = ['❤️', '🔥', '👍', '😍', '👀', '🎉'];
+        const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
+        
+        await sock.sendMessage(statusMsg.key.remoteJid, {
+          react: {
+            text: randomReaction,
+            key: statusMsg.key
+          }
+        });
+        
+        console.log(`Reacted with ${randomReaction} to status`);
+      } catch (error) {
+        console.error('Error handling status:', error.message);
+      }
+    }
+  });
+
+  // Keep process alive
+  setInterval(() => {}, 1000);
+
+} catch (error) {
+  console.error('Bot initialization failed:', error);
+  process.exit(1);
+}
