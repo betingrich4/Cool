@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Session Deployer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #25D366;
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #25D366;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            display: block;
+            margin: 0 auto;
+        }
+        button:hover {
+            background-color: #128C7E;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WhatsApp Session Deployer</h1>
+        <p>Upload your session ID to automatically deploy your WhatsApp bot with auto-status viewing and reacting.</p>
+        
+        <div class="form-group">
+            <label for="sessionId">Session ID:</label>
+            <input type="text" id="sessionId" placeholder="Enter your session ID (Demo-Slayer~fileID#decryptKey)">
+        </div>
+        
+        <button id="deployBtn">Deploy Session</button>
+        
+        <div id="status"></div>
+    </div>
+
+    <script>
+        document.getElementById('deployBtn').addEventListener('click', async () => {
+            const sessionId = document.getElementById('sessionId').value.trim();
+            const statusDiv = document.getElementById('status');
+            
+            if (!sessionId) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Please enter a session ID';
+                return;
+            }
+            
+            statusDiv.className = 'info';
+            statusDiv.textContent = 'Deploying session...';
+            
+            try {
+                const response = await fetch('/deploy', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ sessionId })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    statusDiv.className = 'success';
+                    statusDiv.textContent = 'Session deployed successfully! Bot is now running.';
+                } else {
+                    statusDiv.className = 'error';
+                    statusDiv.textContent = result.message || 'Failed to deploy session';
+                }
+            } catch (error) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = 'Error connecting to server: ' + error.message;
+            }
+        });
+    </script>
+</body>
+</html>
