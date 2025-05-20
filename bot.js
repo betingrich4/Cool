@@ -7,26 +7,26 @@ import {
     DisconnectReason,
     useMultiFileAuthState,
     getContentType
-} from '@adiwajshing/baileys';
+} from '@whiskeysockets/baileys';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
 import NodeCache from 'node-cache';
 import { fileURLToPath } from 'url';
-import { postToDashboard } from './utils.js';
+import { File } from 'megajs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Get user ID from command line
-const userId = process.argv[2];
-if (!userId) {
-    console.error('User ID is required');
+// Get deployment ID from command line
+const deploymentId = process.argv[2];
+if (!deploymentId) {
+    console.error('Deployment ID is required');
     process.exit(1);
 }
 
 // Load config
-const configPath = path.join(__dirname, 'configs', `${userId}.cjs`);
+const configPath = path.join(__dirname, 'configs', `${deploymentId}.cjs`);
 let config;
 try {
     config = (await import(configPath)).default;
@@ -35,7 +35,7 @@ try {
     process.exit(1);
 }
 
-const sessionDir = path.join(__dirname, 'sessions', userId);
+const sessionDir = path.join(__dirname, 'sessions', deploymentId);
 const credsPath = path.join(sessionDir, 'creds.json');
 const msgRetryCounterCache = new NodeCache();
 
@@ -44,16 +44,35 @@ if (!fs.existsSync(sessionDir)) {
 }
 
 async function downloadSessionData() {
+    console.log("Initializing session with ID:", config.SESSION_ID);
+
     if (!config.SESSION_ID) {
         console.error('SESSION_ID is not configured!');
         return false;
     }
 
+    const sessdata = config.SESSION_ID.split("Demo-Slayer~")[1];
+
+    if (!sessdata || !sessdata.includes("#")) {
+        console.error('Invalid SESSION_ID format! It must contain both file ID and decryption key.');
+        return false;
+    }
+
+    const [fileID, decryptKey] = sessdata.split("#");
+
     try {
-        console.log("Downloading session data...");
-        // Implement your session download logic here
-        // For now, we'll just create an empty creds file
-        fs.writeFileSync(credsPath, JSON.stringify({}));
+        console.log("Downloading session data from MEGA...");
+        const file = File.fromURL(`https://mega.nz/file/${fileID}#${decryptKey}`);
+
+        const data = await new Promise((resolve, reject) => {
+            file.download((err, data) => {
+                if (err) reject(err);
+                else resolve(data);
+            });
+        });
+
+        await fs.promises.writeFile(credsPath, data);
+        console.log("Session successfully loaded!");
         return true;
     } catch (error) {
         console.error('Failed to download session data:', error);
@@ -70,7 +89,7 @@ async function startBot() {
             version,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
-            browser: ["Auto-Deploy-Bot", "safari", "3.3"],
+            browser: ["Status-Bot", "safari", "3.3"],
             auth: state,
             msgRetryCounterCache
         });
@@ -80,15 +99,14 @@ async function startBot() {
             
             if (connection === 'close') {
                 if (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) {
-                    console.log('Reconnecting...');
+                    console.log('Connection closed, reconnecting...');
                     setTimeout(startBot, 5000);
                 } else {
-                    console.log('Connection closed, not reconnecting');
-                    postToDashboard(userId, 'disconnected');
+                    console.log('Connection closed permanently');
+                    process.exit(0);
                 }
             } else if (connection === 'open') {
-                console.log("Bot connected successfully");
-                postToDashboard(userId, 'connected');
+                console.log("Successfully connected to WhatsApp");
             }
         });
 
@@ -106,10 +124,7 @@ async function startBot() {
                     : mek.message;
 
                 if (mek.key.remoteJid === 'status@broadcast' && config.AUTO_STATUS_REACT === "true") {
-                    const userJid = sock.user?.id;
-                    if (!userJid) return;
-
-                    const emojiList = ['❤️', '😇', '💯', '🔥', '💎', '💗', '🤍', '👀', '🥰', '😎'];
+                    const emojiList = ['❤️', '🔥', '💯', '😍', '👏', '🎉', '👍', '🤩', '💕', '😎'];
                     const randomEmoji = emojiList[Math.floor(Math.random() * emojiList.length)];
 
                     await sock.sendMessage(mek.key.remoteJid, {
@@ -119,11 +134,10 @@ async function startBot() {
                         }
                     });
 
-                    console.log(`Auto-reacted to status with: ${randomEmoji}`);
-                    postToDashboard(userId, 'status_reacted');
+                    console.log(`Reacted to status with: ${randomEmoji}`);
                 }
             } catch (err) {
-                console.error("Auto Like Status Error:", err);
+                console.error("Status reaction error:", err);
             }
         });
 
@@ -141,15 +155,14 @@ async function startBot() {
         });
 
     } catch (error) {
-        console.error('Critical Error:', error);
-        postToDashboard(userId, 'error', error.message);
+        console.error('Critical error:', error);
         process.exit(1);
     }
 }
 
 async function init() {
     if (fs.existsSync(credsPath)) {
-        console.log("Session file found, starting bot...");
+        console.log("Existing session found, connecting...");
         await startBot();
     } else {
         const sessionDownloaded = await downloadSessionData();
@@ -157,7 +170,6 @@ async function init() {
             await startBot();
         } else {
             console.log("Failed to initialize session");
-            postToDashboard(userId, 'init_failed');
             process.exit(1);
         }
     }
